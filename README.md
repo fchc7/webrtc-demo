@@ -1,36 +1,65 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# WebRTC 视频通话应用
 
-## Getting Started
+这是一个基于 WebRTC 技术的实时视频通话应用，支持一对一视频通话、文字聊天和文件传输功能。
 
-First, run the development server:
+## 功能特点
 
+- 实时视频通话
+- 文字聊天
+- 文件传输
+- 设备选择（摄像头/麦克风）
+- 支持同一台电脑多窗口测试
+- 移动端适配
+
+## 技术栈
+
+- 前端：HTML5, CSS3, JavaScript
+- 信令服务器：Socket.IO
+- 视频通话：WebRTC
+- 调试工具：vConsole
+
+## 安装步骤
+
+1. 克隆项目
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone [项目地址]
+cd web-server
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+2. 安装依赖
+```bash
+npm install
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+3. 启动服务器
+```bash
+npm start
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+4. 访问应用
+打开浏览器访问 `http://localhost:3000`
 
-## Learn More
+## 使用说明
 
-To learn more about Next.js, take a look at the following resources:
+1. 输入房间号并点击"加入房间"
+2. 选择要使用的摄像头和麦克风设备
+3. 点击"打开摄像头"按钮
+4. 点击"呼叫"按钮开始通话
+5. 使用聊天框进行文字交流
+6. 使用文件上传功能传输文件
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 本地开发说明
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- 本项目默认使用本地网络进行 WebRTC 连接，无需 TURN/STUN 服务器
+- 支持同一台电脑上使用不同浏览器窗口进行测试
+- 使用 vConsole 进行移动端调试
 
-## Deploy on Vercel
+## 注意事项
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- 确保浏览器支持 WebRTC
+- 首次使用需要允许浏览器访问摄像头和麦克风
+- 建议使用 Chrome 或 Firefox 最新版本
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 许可证
+
+MIT 

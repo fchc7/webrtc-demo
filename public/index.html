@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>WebRTC 视频通话</title>
+    <script src="https://unpkg.com/vconsole@latest/dist/vconsole.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 100%;
+            margin: 0;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+        .video-container {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin: 10px 0;
+        }
+        video {
+            width: 100%;
+            max-height: 40vh;
+            background: #000;
+            border-radius: 8px;
+            object-fit: cover;
+        }
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 10px 0;
+            justify-content: center;
+        }
+        button {
+            padding: 8px 16px;
+            font-size: 14px;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+            background: #007bff;
+            color: white;
+            flex: 1;
+            min-width: 80px;
+            max-width: 120px;
+        }
+        button:disabled {
+            background: #ccc;
+        }
+        .room-box {
+            margin-bottom: 10px;
+            display: flex;
+            gap: 10px;
+        }
+        .room-box input {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .device-select {
+            margin: 10px 0;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .device-select select {
+            flex: 1;
+            min-width: 120px;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .chat-box {
+            margin: 10px 0;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 10px;
+            height: 200px;
+            display: flex;
+            flex-direction: column;
+        }
+        #chatMessages {
+            flex: 1;
+            overflow-y: auto;
+            margin-bottom: 10px;
+            padding: 5px;
+            background: #f9f9f9;
+            border-radius: 4px;
+        }
+        .chat-input-box {
+            display: flex;
+            gap: 10px;
+        }
+        .chat-input-box input {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .file-box {
+            margin: 10px 0;
+            display: flex;
+            gap: 10px;
+        }
+        .file-box input[type="file"] {
+            flex: 1;
+        }
+        /* vConsole 样式优化 */
+        #__vconsole .vc-switch {
+            bottom: 20px !important;
+            right: 20px !important;
+        }
+        #__vconsole .vc-panel {
+            max-height: 80vh !important;
+        }
+        @media (min-width: 768px) {
+            body {
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 20px;
+            }
+            .video-container {
+                flex-direction: row;
+            }
+            video {
+                width: 45%;
+                max-height: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>WebRTC 视频通话</h1>
+    <div class="room-box">
+        <input id="roomInput" placeholder="输入房间号" />
+        <button id="joinButton">加入房间</button>
+    </div>
+    <div id="roomStatus"></div>
+    <div class="device-select">
+        <select id="videoSelect"></select>
+        <select id="audioSelect"></select>
+    </div>
+    <div class="video-container">
+        <video id="localVideo" autoplay playsinline muted></video>
+        <video id="remoteVideo" autoplay playsinline></video>
+    </div>
+    <div class="controls">
+        <button id="startButton" disabled>打开摄像头</button>
+        <button id="callButton" disabled>呼叫</button>
+        <button id="hangupButton" disabled>挂断</button>
+        <button id="muteButton" disabled>静音</button>
+    </div>
+    <div class="chat-box">
+        <div id="chatMessages"></div>
+        <div class="chat-input-box">
+            <input id="chatInput" placeholder="输入消息" />
+            <button id="sendButton">发送</button>
+        </div>
+    </div>
+    <div class="file-box">
+        <input type="file" id="fileInput" />
+        <button id="sendFileButton">发送文件</button>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script>
+        const localVideo = document.getElementById('localVideo');
+        const remoteVideo = document.getElementById('remoteVideo');
+        const startButton = document.getElementById('startButton');
+        const callButton = document.getElementById('callButton');
+        const hangupButton = document.getElementById('hangupButton');
+        const muteButton = document.getElementById('muteButton');
+        const joinButton = document.getElementById('joinButton');
+        const roomInput = document.getElementById('roomInput');
+        const roomStatus = document.getElementById('roomStatus');
+        const videoSelect = document.getElementById('videoSelect');
+        const audioSelect = document.getElementById('audioSelect');
+        const chatMessages = document.getElementById('chatMessages');
+        const chatInput = document.getElementById('chatInput');
+        const sendButton = document.getElementById('sendButton');
+        const fileInput = document.getElementById('fileInput');
+        const sendFileButton = document.getElementById('sendFileButton');
+
+        let localStream;
+        let peerConnection;
+        let socket;
+        let room = '';
+        let isCaller = false;
+        let isMuted = false;
+        const configuration = {
+            // WebRTC 配置
+            // 本地测试时不需要 STUN/TURN 服务器
+            // iceServers: [
+            //     {
+            //         urls: [
+            //         "stun:stun.l.google.com:19302",
+            //         "stun:stun1.l.google.com:19302"
+            //         ]
+            //     }
+            // ],
+            iceTransportPolicy: "all",
+            iceCandidatePoolSize: 10,
+            bundlePolicy: "max-bundle",
+            rtcpMuxPolicy: "require",
+            // 使用统一的 SDP 计划
+            sdpSemantics: 'unified-plan',
+            // 本地测试时不需要 ICE 候选者池
+            iceCandidatePoolSize: 0
+        };
+
+        let isNegotiating = false;
+        let retryCount = 0;
+        const MAX_RETRIES = 3;
+
+        // 获取设备列表
+        async function getDevices() {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            devices.forEach(device => {
+                if (device.kind === 'videoinput') {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.text = device.label || `摄像头 ${videoSelect.length + 1}`;
+                    videoSelect.appendChild(option);
+                } else if (device.kind === 'audioinput') {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.text = device.label || `麦克风 ${audioSelect.length + 1}`;
+                    audioSelect.appendChild(option);
+                }
+            });
+        }
+
+        // 加入房间处理
+        joinButton.onclick = () => {
+            room = roomInput.value.trim();
+            if (!room) {
+                alert('请输入房间号');
+                return;
+            }
+            // 连接信令服务器
+            socket = io();
+            socket.emit('join', room);
+            roomStatus.textContent = '已加入房间：' + room;
+            joinButton.disabled = true;
+            roomInput.disabled = true;
+            startButton.disabled = false;
+
+            // 信令处理
+            socket.on('joined', (data) => {
+                // 当房间内有多人时，启用呼叫按钮
+                if (data.numClients > 1) {
+                    callButton.disabled = false;
+                }
+            });
+            socket.on('peer-joined', (data) => {
+                // 当新对等端加入时，启用呼叫按钮
+                callButton.disabled = false;
+            });
+            socket.on('signal', async ({ id, data }) => {
+                console.log('收到信令消息:', data);
+                if (!peerConnection) await createPeerConnection();
+                if (data.type === 'offer') {
+                    // 处理收到的 offer
+                    console.log('收到 offer，设置远程描述...');
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+                    console.log('创建 answer...');
+                    const answer = await peerConnection.createAnswer();
+                    console.log('设置本地描述...');
+                    await peerConnection.setLocalDescription(answer);
+                    console.log('发送 answer 到对端...');
+                    socket.emit('signal', { room, data: answer });
+                } else if (data.type === 'answer') {
+                    // 处理收到的 answer
+                    console.log('收到 answer，设置远程描述...');
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+                } else if (data.candidate) {
+                    // 处理收到的 ICE candidate
+                    console.log('收到 ICE candidate，添加到连接...');
+                    try {
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(data));
+                    } catch (e) {
+                        console.error('添加 ICE candidate 失败:', e);
+                    }
+                }
+            });
+            socket.on('peer-left', () => {
+                // 处理对等端离开
+                hangup();
+                alert('对方已离开房间');
+            });
+            socket.on('chat-message', (data) => {
+                // 处理聊天消息
+                console.log('收到聊天消息:', data);
+                appendMessage(data);
+            });
+            socket.on('file-data', (data) => {
+                // 处理文件传输
+                receiveFile(data);
+            });
+        };
+
+        // 开始本地媒体流
+        startButton.onclick = async () => {
+            try {
+                const constraints = {
+                    video: { deviceId: videoSelect.value ? { exact: videoSelect.value } : undefined },
+                    audio: { deviceId: audioSelect.value ? { exact: audioSelect.value } : undefined }
+                };
+                console.log('获取媒体设备，约束条件:', constraints);
+                localStream = await navigator.mediaDevices.getUserMedia(constraints);
+                console.log('获取媒体设备成功:', localStream);
+                localVideo.srcObject = localStream;
+                startButton.disabled = true;
+                callButton.disabled = false;
+                muteButton.disabled = false;
+            } catch (e) {
+                console.error('获取媒体设备失败:', e);
+                alert('获取媒体设备失败: ' + e.message);
+            }
+        };
+
+        // 发起呼叫
+        callButton.onclick = async () => {
+            if (!localStream) {
+                alert('请先打开摄像头');
+                return;
+            }
+            console.log('开始建立 WebRTC 连接...');
+            isCaller = true;
+            await createPeerConnection();
+            callButton.disabled = true;
+            hangupButton.disabled = false;
+            await createAndSendOffer();
+        };
+
+        // 挂断通话
+        hangupButton.onclick = () => {
+            hangup();
+            socket.disconnect();
+            joinButton.disabled = false;
+            roomInput.disabled = false;
+            roomStatus.textContent = '';
+        };
+
+        // 静音控制
+        muteButton.onclick = () => {
+            if (localStream) {
+                localStream.getAudioTracks().forEach(track => {
+                    track.enabled = !track.enabled;
+                });
+                isMuted = !isMuted;
+                muteButton.textContent = isMuted ? '取消静音' : '静音';
+            }
+        };
+
+        sendButton.onclick = () => {
+            const message = chatInput.value.trim();
+            if (message) {
+                console.log('发送聊天消息:', { room, message });
+                socket.emit('chat-message', { room, message });
+                appendMessage({ message, sender: '我' });
+                chatInput.value = '';
+            }
+        };
+
+        sendFileButton.onclick = () => {
+            const file = fileInput.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    socket.emit('file-data', { room, data: e.target.result, name: file.name });
+                };
+                reader.readAsArrayBuffer(file);
+            }
+        };
+
+        function appendMessage(data) {
+            const messageElement = document.createElement('div');
+            messageElement.textContent = `${data.sender}: ${data.message}`;
+            chatMessages.appendChild(messageElement);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function receiveFile(data) {
+            const blob = new Blob([data.data]);
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = data.name;
+            a.click();
+        }
+
+        // 创建对等连接
+        async function createPeerConnection() {
+            console.log('创建 RTCPeerConnection, localStream:', localStream);
+            if (!localStream) {
+                console.error('localStream 未初始化');
+                return null;
+            }
+            if (peerConnection) return peerConnection;
+            peerConnection = new RTCPeerConnection(configuration);
+            console.log('添加本地媒体轨道...');
+            
+            // 添加所有本地媒体轨道到对等连接
+            localStream.getTracks().forEach(track => {
+                console.log('添加轨道:', track.kind, track.enabled);
+                peerConnection.addTrack(track, localStream);
+            });
+
+            // 处理远程媒体流
+            peerConnection.ontrack = event => {
+                console.log('收到远程媒体轨道:', event.track.kind, event.track.enabled);
+                if (event.streams && event.streams[0]) {
+                    console.log('设置远程视频流');
+                    remoteVideo.srcObject = event.streams[0];
+                }
+            };
+
+            // 处理 ICE 候选者
+            peerConnection.onicecandidate = event => {
+                if (event.candidate) {
+                    console.log('发送 ICE candidate 到对端:', event.candidate);
+                    socket.emit('signal', { room, data: event.candidate });
+                }
+            };
+
+            // 处理连接状态变化
+            peerConnection.onconnectionstatechange = () => {
+                console.log('连接状态变化:', peerConnection.connectionState);
+                if (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'closed') {
+                    hangup();
+                }
+            };
+
+            // 处理 ICE 连接状态变化
+            peerConnection.oniceconnectionstatechange = () => {
+                console.log('ICE 连接状态变化:', peerConnection.iceConnectionState);
+                if (peerConnection.iceConnectionState === 'failed') {
+                    console.log('ICE 连接失败，尝试重新协商...');
+                    if (isCaller && !isNegotiating) {
+                        createAndSendOffer();
+                    }
+                }
+            };
+
+            // 处理 ICE 收集状态变化
+            peerConnection.onicegatheringstatechange = () => {
+                console.log('ICE 收集状态变化:', peerConnection.iceGatheringState);
+            };
+
+            // 处理重新协商需求
+            peerConnection.onnegotiationneeded = async () => {
+                console.log('需要重新协商...');
+                if (isCaller && !isNegotiating) {
+                    await createAndSendOffer();
+                }
+            };
+            return peerConnection;
+        }
+
+        // 创建并发送 offer
+        async function createAndSendOffer() {
+            if (isNegotiating) {
+                console.log('正在协商中，跳过...');
+                return;
+            }
+
+            if (retryCount >= MAX_RETRIES) {
+                console.error('达到最大重试次数，停止重试');
+                retryCount = 0;
+                isNegotiating = false;
+                return;
+            }
+
+            let offer;
+            try {
+                isNegotiating = true;
+                console.log('创建新的 offer...');
+                
+                // 如果是重试，先重置连接
+                if (retryCount > 0) {
+                    console.log(`第 ${retryCount} 次重试，重置连接...`);
+                    if (peerConnection) {
+                        peerConnection.close();
+                        peerConnection = null;
+                    }
+                    await createPeerConnection();
+                }
+
+                // 创建 offer
+                offer = await peerConnection.createOffer({
+                    offerToReceiveAudio: true,
+                    offerToReceiveVideo: true,
+                    iceRestart: true
+                });
+
+                console.log('设置本地描述...');
+                await peerConnection.setLocalDescription(offer);
+                console.log('发送 offer 到对端...');
+                socket.emit('signal', { room, data: offer });
+                retryCount = 0;
+                isNegotiating = false;
+            } catch (e) {
+                console.error('创建 offer 失败:', e);
+                retryCount++;
+                isNegotiating = false;
+                
+                if (retryCount < MAX_RETRIES) {
+                    console.log(`将在 1 秒后进行第 ${retryCount} 次重试...`);
+                    setTimeout(createAndSendOffer, 1000);
+                } else {
+                    console.error('达到最大重试次数，停止重试');
+                    retryCount = 0;
+                    alert('连接失败，请刷新页面重试');
+                }
+            }
+        }
+
+        // 挂断处理
+        function hangup() {
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+            }
+            remoteVideo.srcObject = null;
+            hangupButton.disabled = true;
+            callButton.disabled = false;
+            muteButton.disabled = true;
+        }
+
+        // 初始化设备列表
+        getDevices();
+
+        // 初始化 vConsole 用于移动端调试
+        var vConsole = new VConsole();
+    </script>
+</body>
+</html> 
