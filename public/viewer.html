@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>WebRTC 流观看</title>
+    <script src="https://unpkg.com/vconsole@latest/dist/vconsole.min.js"></script>
+    <script>
+      // 初始化 vConsole
+      var vConsole = new VConsole();
+    </script>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 100%;
+        margin: 0;
+        padding: 10px;
+        box-sizing: border-box;
+      }
+      .video-container {
+        position: relative;
+        margin: 10px 0;
+      }
+      canvas {
+        width: 100%;
+        max-height: 80vh;
+        background: #000;
+        border-radius: 8px;
+        object-fit: cover;
+      }
+      .play-button {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(0, 0, 0, 0.7);
+        color: white;
+        padding: 15px 30px;
+        border-radius: 10px;
+        cursor: pointer;
+        z-index: 10;
+        font-size: 18px;
+        font-weight: bold;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+        border: 2px solid white;
+      }
+      .controls {
+        display: flex;
+        gap: 10px;
+        margin: 10px 0;
+        justify-content: center;
+      }
+      button {
+        padding: 8px 16px;
+        font-size: 14px;
+        cursor: pointer;
+        border: none;
+        border-radius: 4px;
+        background: #007bff;
+        color: white;
+        flex: 1;
+        max-width: 120px;
+      }
+      button:disabled {
+        background: #ccc;
+      }
+      .room-box {
+        margin-bottom: 10px;
+        display: flex;
+        gap: 10px;
+      }
+      .room-box input {
+        flex: 1;
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
+      .status {
+        display: inline-block;
+        padding: 3px 8px;
+        margin: 5px 0;
+        border-radius: 4px;
+        font-size: 12px;
+        background-color: #ccc;
+        color: white;
+      }
+      .status.connected {
+        background-color: #4caf50;
+      }
+      .status.disconnected {
+        background-color: #f44336;
+      }
+      .chat-box {
+        margin: 10px 0;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        padding: 10px;
+        height: 200px;
+        display: flex;
+        flex-direction: column;
+      }
+      #messages {
+        flex: 1;
+        overflow-y: auto;
+        margin-bottom: 10px;
+        padding: 5px;
+        background: #f9f9f9;
+        border-radius: 4px;
+      }
+      .chat-input {
+        display: flex;
+        gap: 10px;
+      }
+      .chat-input input {
+        flex: 1;
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
+      .file-input {
+        margin: 10px 0;
+        display: flex;
+        gap: 10px;
+      }
+      .file-list {
+        margin: 10px 0;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        padding: 10px;
+        max-height: 150px;
+        overflow-y: auto;
+      }
+      .file-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 5px;
+        border-bottom: 1px solid #eee;
+      }
+      .file-item:last-child {
+        border-bottom: none;
+      }
+      @media (min-width: 768px) {
+        body {
+          max-width: 800px;
+          margin: 0 auto;
+          padding: 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>
+      WebRTC 观看端
+      <span id="status" class="status disconnected">未连接</span>
+    </h1>
+    <div class="room-box">
+      <input id="roomInput" placeholder="输入房间号" />
+      <button id="joinBtn">加入房间</button>
+    </div>
+    <div id="roomText"></div>
+    <div class="video-container">
+      <canvas id="videoCanvas"></canvas>
+      <div id="playButton" class="play-button">点击播放</div>
+      <div
+        id="streamStatus"
+        style="
+          position: absolute;
+          top: 10px;
+          left: 10px;
+          background-color: rgba(0, 0, 0, 0.5);
+          color: white;
+          padding: 5px 10px;
+          border-radius: 4px;
+          font-size: 12px;
+        "
+      >
+        等待视频流...
+      </div>
+    </div>
+    <div class="controls">
+      <button id="leaveBtn" disabled>离开房间</button>
+      <button id="muteBtn">取消静音</button>
+    </div>
+
+    <h3>聊天消息</h3>
+    <div class="chat-box">
+      <div id="messages"></div>
+      <div class="chat-input">
+        <input id="messageInput" placeholder="输入消息" />
+        <button id="sendBtn" disabled>发送</button>
+      </div>
+    </div>
+
+    <h3>发送文件</h3>
+    <div class="file-input">
+      <input type="file" id="fileInput" />
+      <button id="sendFileBtn" disabled>发送文件</button>
+    </div>
+
+    <h3>接收的文件</h3>
+    <div id="fileList" class="file-list">
+      <div>暂无文件</div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script>
+      // 元素引用
+      const videoCanvas = document.getElementById("videoCanvas");
+      const canvasCtx = videoCanvas.getContext("2d");
+      const playButton = document.getElementById("playButton");
+      const joinBtn = document.getElementById("joinBtn");
+      const leaveBtn = document.getElementById("leaveBtn");
+      const muteBtn = document.getElementById("muteBtn");
+      const roomInput = document.getElementById("roomInput");
+      const roomText = document.getElementById("roomText");
+      const messages = document.getElementById("messages");
+      const messageInput = document.getElementById("messageInput");
+      const sendBtn = document.getElementById("sendBtn");
+      const fileInput = document.getElementById("fileInput");
+      const sendFileBtn = document.getElementById("sendFileBtn");
+      const fileList = document.getElementById("fileList");
+      const statusElement = document.getElementById("status");
+      const streamStatus = document.getElementById("streamStatus");
+
+      // 状态变量
+      let peerConnection = null;
+      let socket = null;
+      let room = "";
+      let isMuted = true;
+      let videoStream = null;
+      let videoElement = null;
+      let animationFrameId = null;
+      let isPlaying = false;
+
+      // 设置Canvas尺寸
+      function setupCanvas() {
+        const containerWidth = videoCanvas.parentElement.clientWidth;
+        videoCanvas.width = containerWidth;
+        videoCanvas.height = (containerWidth * 9) / 16;
+        canvasCtx.fillStyle = "#000";
+        canvasCtx.fillRect(0, 0, videoCanvas.width, videoCanvas.height);
+      }
+
+      window.addEventListener("resize", setupCanvas);
+      window.addEventListener("DOMContentLoaded", setupCanvas);
+
+      const configuration = {
+        iceServers: [],
+        iceTransportPolicy: "all",
+        bundlePolicy: "max-bundle",
+        rtcpMuxPolicy: "require",
+        sdpSemantics: "unified-plan",
+      };
+
+      function updateStatus(connected) {
+        statusElement.textContent = connected ? "已连接" : "未连接";
+        statusElement.className = `status ${
+          connected ? "connected" : "disconnected"
+        }`;
+      }
+
+      function updateStreamStatus(message) {
+        if (streamStatus) {
+          streamStatus.textContent = message;
+          streamStatus.style.display = message ? "block" : "none";
+        }
+      }
+
+      function drawVideoFrame() {
+        if (videoElement && isPlaying) {
+          if (videoElement.videoWidth && videoElement.videoHeight) {
+            const videoRatio =
+              videoElement.videoWidth / videoElement.videoHeight;
+            const canvasRatio = videoCanvas.width / videoCanvas.height;
+            let drawWidth,
+              drawHeight,
+              offsetX = 0,
+              offsetY = 0;
+            if (videoRatio > canvasRatio) {
+              drawHeight = videoCanvas.height;
+              drawWidth = drawHeight * videoRatio;
+              offsetX = (videoCanvas.width - drawWidth) / 2;
+            } else {
+              drawWidth = videoCanvas.width;
+              drawHeight = drawWidth / videoRatio;
+              offsetY = (videoCanvas.height - drawHeight) / 2;
+            }
+            canvasCtx.fillStyle = "#000";
+            canvasCtx.fillRect(0, 0, videoCanvas.width, videoCanvas.height);
+            canvasCtx.drawImage(
+              videoElement,
+              offsetX,
+              offsetY,
+              drawWidth,
+              drawHeight
+            );
+          } else {
+            canvasCtx.fillStyle = "#000";
+            canvasCtx.fillRect(0, 0, videoCanvas.width, videoCanvas.height);
+            canvasCtx.fillStyle = "#fff";
+            canvasCtx.font = "14px Arial";
+            canvasCtx.textAlign = "center";
+            canvasCtx.fillText(
+              "等待视频数据...",
+              videoCanvas.width / 2,
+              videoCanvas.height / 2
+            );
+          }
+          animationFrameId = requestAnimationFrame(drawVideoFrame);
+        }
+      }
+
+      function startVideoPlayback() {
+        if (!videoElement || !videoStream) {
+          console.error("没有视频源可播放 (startVideoPlayback)");
+          updateStreamStatus("没有视频源");
+          if (playButton) playButton.style.display = "block";
+          return;
+        }
+        if (isPlaying && videoElement && !videoElement.paused) {
+          console.log("视频已经在播放中 (startVideoPlayback)");
+          if (playButton) playButton.style.display = "none";
+          return;
+        }
+        console.log("尝试通过 startVideoPlayback 播放视频");
+        updateStreamStatus("尝试播放视频...");
+        videoElement
+          .play()
+          .then(() => {
+            console.log("视频播放成功 (startVideoPlayback)");
+            isPlaying = true;
+            drawVideoFrame();
+            if (playButton) playButton.style.display = "none";
+            updateStreamStatus("视频流已连接");
+          })
+          .catch((err) => {
+            console.error("视频播放失败 (startVideoPlayback): ", err);
+            console.error(
+              `Video Element State: readyState=${
+                videoElement.readyState
+              }, networkState=${
+                videoElement.networkState
+              }, error=${JSON.stringify(videoElement.error)}`
+            );
+            updateStreamStatus("播放失败，请点击按钮重试");
+            if (playButton) playButton.style.display = "block";
+            isPlaying = false;
+          });
+      }
+
+      function stopVideoPlayback() {
+        if (animationFrameId) {
+          cancelAnimationFrame(animationFrameId);
+          animationFrameId = null;
+        }
+        isPlaying = false;
+        canvasCtx.fillStyle = "#000";
+        canvasCtx.fillRect(0, 0, videoCanvas.width, videoCanvas.height);
+        if (videoElement && !videoElement.paused) {
+          videoElement.pause();
+        }
+      }
+
+      playButton.addEventListener("click", () => {
+        console.log("播放按钮被点击");
+        startVideoPlayback();
+      });
+
+      muteBtn.addEventListener("click", () => {
+        isMuted = !isMuted;
+        if (videoElement) videoElement.muted = isMuted;
+        muteBtn.textContent = isMuted ? "取消静音" : "静音";
+        console.log(isMuted ? "已静音" : "已取消静音");
+      });
+
+      joinBtn.addEventListener("click", async () => {
+        room = roomInput.value.trim();
+        if (!room) {
+          alert("请输入房间号");
+          return;
+        }
+        console.log(`尝试加入房间: ${room}`);
+        if (socket) {
+          console.log("已存在连接，先断开现有连接");
+          socket.disconnect();
+          socket = null;
+        }
+        if (peerConnection) {
+          console.log("关闭现有的对等连接");
+          peerConnection.close();
+          peerConnection = null;
+        }
+        roomText.textContent = `正在加入房间: ${room}`;
+        joinBtn.disabled = true;
+        roomInput.disabled = true;
+        console.log("连接服务器...");
+        socket = io(window.location.origin, {
+          reconnectionAttempts: 3,
+          timeout: 10000,
+          transports: ["websocket", "polling"],
+        });
+
+        socket.on("connect", () => {
+          console.log(`已连接到服务器，ID: ${socket.id}`);
+          socket.emit("join", room);
+        });
+
+        socket.on("connect_error", (error) => {
+          console.error("连接服务器失败", error);
+          joinBtn.disabled = false;
+          roomInput.disabled = false;
+          roomText.textContent = "连接失败，请重试";
+        });
+
+        socket.on("disconnect", (reason) => {
+          console.log(`与服务器断开连接: ${reason}`);
+          updateStatus(false);
+          if (reason === "io server disconnect") socket.connect();
+        });
+
+        socket.on("joined", async (data) => {
+          console.log(`成功加入房间 ${room}，当前人数: ${data.numClients}`);
+          roomText.textContent = `已加入房间: ${room}，人数: ${data.numClients}`;
+          leaveBtn.disabled = false;
+          sendBtn.disabled = false;
+          sendFileBtn.disabled = false;
+          await setupPeerConnection();
+          console.log("连接准备就绪，等待媒体流...");
+          setTimeout(() => {
+            if (!videoStream && socket && room) {
+              console.log("5秒内未检测到视频流，发送流请求...");
+              socket.emit("request-stream", { room });
+              updateStreamStatus("正在请求视频流...");
+            }
+          }, 5000);
+        });
+
+        socket.on("peer-joined", async (data) => {
+          console.log(
+            `新用户加入房间，类型: ${data.type || "未知"}，人数: ${
+              data.numClients
+            }`
+          );
+          roomText.textContent = `房间: ${room}，人数: ${data.numClients}`;
+          if (data.type === "meeting" && !peerConnection) {
+            console.log("会议端加入，准备连接");
+            await setupPeerConnection();
+          }
+        });
+
+        socket.on("peer-left", (data) => {
+          console.log(`用户 ${data.id} 离开房间`);
+          roomText.textContent = `房间: ${room}，有用户离开了`;
+        });
+
+        socket.on("signal", async (signalData) => {
+          console.log(
+            `收到信令消息: ${
+              signalData.data
+                ? signalData.data.type ||
+                  (signalData.data.candidate ? "ICE候选" : "未知类型")
+                : "未知内容"
+            }`
+          );
+          await handleSignal(signalData);
+        });
+
+        socket.on("chat-message", (data) => {
+          console.log(`收到聊天消息: ${data.message}`);
+          appendMessage(data.sender, data.message);
+        });
+
+        socket.on("file-data", (data) => {
+          console.log(
+            `收到文件: ${data.name}, 大小: ${
+              data.data ? data.data.byteLength : "未知"
+            } 字节`
+          );
+          receiveFile(data);
+        });
+
+        socket.on("stream-error", (data) => {
+          console.error("视频流错误:", data.error);
+          updateStreamStatus(`视频流错误: ${data.error}`);
+        });
+      });
+
+      function leaveRoom() {
+        console.log("离开房间");
+        stopVideoPlayback();
+        if (peerConnection) {
+          peerConnection.close();
+          peerConnection = null;
+        }
+        if (socket) {
+          socket.disconnect();
+          socket = null;
+        }
+        if (videoElement) {
+          if (videoElement.srcObject) {
+            videoElement.srcObject.getTracks().forEach((track) => track.stop());
+            videoElement.srcObject = null;
+          }
+        }
+        videoStream = null;
+        updateStatus(false);
+        updateStreamStatus("未连接视频流");
+        joinBtn.disabled = false;
+        roomInput.disabled = false;
+        leaveBtn.disabled = true;
+        sendBtn.disabled = true;
+        sendFileBtn.disabled = true;
+        roomText.textContent = "";
+        if (playButton) playButton.style.display = "block";
+      }
+
+      leaveBtn.addEventListener("click", leaveRoom);
+
+      window.addEventListener("beforeunload", () => {
+        leaveRoom();
+      });
+
+      async function handleSignal({ id, data }) {
+        try {
+          if (!peerConnection) {
+            console.log("无 PeerConnection，尝试重新建立");
+            await setupPeerConnection();
+            if (!peerConnection) {
+              console.error("无法创建对等连接以处理信号");
+              return;
+            }
+          }
+          if (data.type === "offer") {
+            console.log("处理Offer...");
+            if (peerConnection.signalingState !== "stable") {
+              console.log(
+                `Offer时信令状态为 ${peerConnection.signalingState}，尝试回滚`
+              );
+              await Promise.all([
+                peerConnection.setLocalDescription({ type: "rollback" }),
+                peerConnection.setRemoteDescription(
+                  new RTCSessionDescription(data)
+                ),
+              ]).catch((err) =>
+                console.error("回滚或设置远端描述失败(offer)", err)
+              );
+            } else {
+              await peerConnection
+                .setRemoteDescription(new RTCSessionDescription(data))
+                .catch((err) => console.error("设置远端描述失败(offer)", err));
+            }
+            console.log("创建Answer...");
+            const answer = await peerConnection
+              .createAnswer()
+              .catch((err) => console.error("创建Answer失败", err));
+            if (!answer) return;
+            console.log("设置本地描述(Answer)...");
+            await peerConnection
+              .setLocalDescription(answer)
+              .catch((err) => console.error("设置本地描述失败(answer)", err));
+            console.log("发送Answer...");
+            socket.emit("signal", { room, data: answer });
+          } else if (data.type === "answer") {
+            console.log("处理Answer...");
+            await peerConnection
+              .setRemoteDescription(new RTCSessionDescription(data))
+              .catch((err) => console.error("设置远端描述失败(answer)", err));
+          } else if (data.candidate) {
+            console.log(`处理ICE候选...`);
+            try {
+              await peerConnection.addIceCandidate(new RTCIceCandidate(data));
+            } catch (err) {
+              if (peerConnection.remoteDescription) {
+                console.warn("添加ICE候选失败:", err);
+              } else {
+                console.log("忽略ICE候选，远端描述尚未设置");
+              }
+            }
+          } else {
+            console.log("收到未知类型的信令数据: ", data);
+          }
+        } catch (error) {
+          console.error("信令处理主流程错误", error);
+          if (peerConnection) {
+            console.log("尝试关闭并重建连接因信令错误...");
+            peerConnection.close();
+            peerConnection = null;
+            await setupPeerConnection();
+          }
+        }
+      }
+
+      async function setupPeerConnection() {
+        if (peerConnection) {
+          const currentState =
+            peerConnection.connectionState || peerConnection.iceConnectionState;
+          if (currentState === "connected" || currentState === "completed") {
+            console.log("复用当前稳定连接");
+            return peerConnection;
+          } else {
+            console.log(`当前连接状态不佳(${currentState})，重新创建连接...`);
+            peerConnection.close();
+            peerConnection = null;
+          }
+        }
+        console.log("创建新的对等连接");
+        try {
+          peerConnection = new RTCPeerConnection(configuration);
+          console.log("新对等连接已创建");
+
+          peerConnection.onicecandidate = (event) => {
+            if (event.candidate) {
+              console.log(`生成新的ICE候选`);
+              socket.emit("signal", { room, data: event.candidate });
+            } else {
+              console.log("ICE候选收集完成");
+            }
+          };
+
+          peerConnection.oniceconnectionstatechange = () => {
+            console.log(`ICE连接状态: ${peerConnection.iceConnectionState}`);
+            if (peerConnection.iceConnectionState === "failed") {
+              console.log("ICE连接失败，尝试重启ICE");
+              peerConnection.restartIce();
+            } else if (peerConnection.iceConnectionState === "connected") {
+              console.log("ICE连接已建立");
+              if (!videoStream) {
+                console.log("ICE连接已建立但无视频流，请求视频流...");
+                socket.emit("request-stream", { room });
+              }
+            }
+          };
+
+          peerConnection.onconnectionstatechange = () => {
+            console.log(`连接状态变化: ${peerConnection.connectionState}`);
+            updateStatus(peerConnection.connectionState === "connected");
+            if (peerConnection.connectionState === "failed") {
+              console.log("PeerConnection 连接失败，尝试重启ICE");
+              peerConnection.restartIce();
+            }
+          };
+
+          peerConnection.onsignalingstatechange = () => {
+            console.log(`信令状态变化: ${peerConnection.signalingState}`);
+          };
+
+          peerConnection.ontrack = (event) => {
+            console.log(
+              `收到媒体轨道: ${event.track.kind}, ID: ${event.track.id}, ReadyState: ${event.track.readyState}`
+            );
+            if (event.streams && event.streams[0]) {
+              const stream = event.streams[0];
+              console.log(
+                `设置视频流 ID: ${stream.id}，包含 ${
+                  stream.getTracks().length
+                } 个轨道`
+              );
+              videoStream = stream;
+              if (!videoElement) {
+                videoElement = document.createElement("video");
+                videoElement.style.display = "none";
+                videoElement.autoplay = true;
+                videoElement.playsInline = true;
+                videoElement.muted = isMuted;
+                document.body.appendChild(videoElement);
+                videoElement.addEventListener("error", (e) => {
+                  console.error("视频元素错误:", videoElement.error);
+                  updateStreamStatus(
+                    `视频错误: ${videoElement.error?.message}`
+                  );
+                });
+                videoElement.addEventListener("loadedmetadata", () => {
+                  console.log(
+                    `视频元数据已加载: ${videoElement.videoWidth}x${videoElement.videoHeight}`
+                  );
+                });
+                videoElement.addEventListener("canplay", () => {
+                  console.log("视频可以播放 (canplay event)");
+                });
+              }
+              videoElement.srcObject = stream;
+              updateStatus(true);
+              updateStreamStatus("视频流已接收，尝试播放...");
+              startVideoPlayback();
+            } else {
+              console.warn("收到轨道事件，但streams为空或无轨道");
+              if (event.track) {
+                // Fallback if no streams but track exists (less common for remote)
+                console.log("尝试直接使用轨道创建流");
+                if (!videoStream) videoStream = new MediaStream();
+                videoStream.addTrack(event.track);
+                if (!videoElement) {
+                  videoElement = document.createElement("video");
+                  videoElement.style.display = "none";
+                  videoElement.autoplay = true;
+                  videoElement.playsInline = true;
+                  videoElement.muted = isMuted;
+                  document.body.appendChild(videoElement);
+                }
+                videoElement.srcObject = videoStream;
+                updateStatus(true);
+                updateStreamStatus("轨道直接设置，尝试播放...");
+                startVideoPlayback();
+              }
+            }
+          };
+
+          return peerConnection;
+        } catch (error) {
+          console.error("创建对等连接失败", error);
+          return null;
+        }
+      }
+
+      function appendMessage(sender, message) {
+        const messageElement = document.createElement("div");
+        messageElement.textContent = `${sender}: ${message}`;
+        messages.appendChild(messageElement);
+        messages.scrollTop = messages.scrollHeight;
+      }
+
+      function receiveFile(data) {
+        try {
+          const blob = new Blob([data.data]);
+          const url = URL.createObjectURL(blob);
+          if (
+            fileList.firstChild &&
+            fileList.firstChild.textContent === "暂无文件"
+          ) {
+            fileList.innerHTML = "";
+          }
+          const fileItem = document.createElement("div");
+          fileItem.className = "file-item";
+          const fileNameSpan = document.createElement("span");
+          fileNameSpan.textContent = data.name;
+          const downloadBtn = document.createElement("button");
+          downloadBtn.textContent = "下载";
+          downloadBtn.onclick = () => {
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = data.name;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            // URL.revokeObjectURL(url); // Revoke later if needed for multiple downloads or keep it if single use
+          };
+          fileItem.appendChild(fileNameSpan);
+          fileItem.appendChild(downloadBtn);
+          fileList.appendChild(fileItem);
+          console.log(`文件 ${data.name} 已可供下载`);
+        } catch (error) {
+          console.error(`处理接收文件错误: ${error.message}`);
+        }
+      }
+
+      sendBtn.addEventListener("click", () => {
+        const message = messageInput.value.trim();
+        if (message && socket) {
+          socket.emit("chat-message", { room, message });
+          appendMessage("我", message);
+          messageInput.value = "";
+        }
+      });
+
+      messageInput.addEventListener("keypress", (e) => {
+        if (e.key === "Enter") sendBtn.click();
+      });
+
+      sendFileBtn.addEventListener("click", () => {
+        const file = fileInput.files[0];
+        if (!file) {
+          alert("请选择文件");
+          return;
+        }
+        if (file.size > 10 * 1024 * 1024) {
+          alert("文件大小不能超过10MB");
+          return;
+        }
+        console.log(`准备发送文件: ${file.name}`);
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const isIOS =
+            /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+          if (isIOS) {
+            console.log("iOS设备检测，使用分块传输");
+            const fileData = e.target.result;
+            const chunkSize = 64 * 1024;
+            const chunks = Math.ceil(fileData.byteLength / chunkSize);
+            socket.emit("file-metadata", {
+              room,
+              name: file.name,
+              size: fileData.byteLength,
+              totalChunks: chunks,
+            });
+            for (let i = 0; i < chunks; i++) {
+              const start = i * chunkSize;
+              const end = Math.min(fileData.byteLength, start + chunkSize);
+              const chunk = fileData.slice(start, end);
+              setTimeout(() => {
+                socket.emit("file-chunk", {
+                  room,
+                  name: file.name,
+                  chunk: chunk,
+                  index: i,
+                  total: chunks,
+                });
+                if (i === chunks - 1) {
+                  console.log("文件所有分块已发送");
+                  appendMessage("系统", `文件 ${file.name} 已发送`);
+                }
+              }, i * 50); // Adjusted delay slightly
+            }
+          } else {
+            socket.emit("file-data", {
+              room,
+              name: file.name,
+              data: e.target.result,
+            });
+            console.log("文件数据已发送 (非iOS)");
+            appendMessage("系统", `文件 ${file.name} 已发送`);
+          }
+        };
+        reader.onerror = (error) => console.error(`文件读取错误: ${error}`);
+        reader.readAsArrayBuffer(file);
+      });
+
+      updateStreamStatus("请加入房间开始观看");
+    </script>
+  </body>
+</html>
